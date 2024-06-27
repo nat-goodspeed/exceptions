@@ -1,5 +1,6 @@
 #include "fiber_context"
 #include <iostream>
+#include <stack>
 #include <stdexcept>
 
 struct Bad: public std::runtime_error {
@@ -12,9 +13,12 @@ struct Worse: public std::runtime_error {
 
 struct Context
 {
-    std::exception_ptr current_exception;
+    Context(const std::string& name): name(name) {}
+    std::string name;
+    std::stack<std::exception_ptr> current_exceptions;
 
     fiber_context resume(fiber_context&& tofiber, Context& tocontext);
+    fiber_context rethrows(fiber_context&& tofiber);
 };
 
 // This illustrates a possible way to implement fiber-local exception
@@ -26,43 +30,53 @@ struct Context
 // library.
 fiber_context Context::resume(fiber_context&& tofiber, Context& tocontext)
 {
-    // save std::current_exception() for the calling fiber
-    auto current = std::current_exception();
-    current_exception = current;
-    if (current)
+    // save each std::current_exception() for the calling fiber
+    while (auto current = std::current_exception())
     {
+        current_exceptions.push(current);
         try
         {
             std::rethrow_exception(current);
         }
-        catch (...)
+        catch (const std::exception& exc) // (...)
         {
-            // cancel std::current_exception()
+            // cancel this std::current_exception()
+            std::cout << name << "::resume() canceling " << exc.what() << std::endl;
         }
     }
+    std::cout << name << "::resume() saved " << current_exceptions.size() << " exceptions" << std::endl;
 
-    // how we resume tofiber depends on tocontext.current_exception
-    if (! tocontext.current_exception)
+    // how we resume tofiber depends on tocontext.current_exceptions
+    return tocontext.rethrows(std::move(tofiber));
+}
+
+fiber_context Context::rethrows(fiber_context&& tofiber)
+{
+    if (current_exceptions.empty())
     {
-        // just resume tofiber with no std::current_exception()
+        // no (more) exceptions in the exception stack
+        std::cout << name << "::rethrows() resuming target" << std::endl;
         return std::move(tofiber).resume();
     }
-    else
+
+    // here there's at least one more exception on the current_exceptions stack
+    std::cout << name << "::rethrows() has " << current_exceptions.size() << " more exceptions" << std::endl;
+    try
     {
-        // there's a current_exception
-        try
-        {
-            std::rethrow_exception(tocontext.current_exception);
-        }
-        catch (...)
-        {
-            return std::move(tofiber).resume();
-        }
+        auto next = std::move(current_exceptions.top());
+        current_exceptions.pop();
+        std::rethrow_exception(next);
+    }
+    catch (const std::exception& exc) // (...)
+    {
+        // switch context from within this catch block
+        std::cout << name << "::rethrows() throwing " << exc.what() << std::endl;
+        return rethrows(std::move(tofiber));
     }
 }
 
 int main(void) {
-    Context fiberA_context, fiberB_context;
+    Context fiberA_context("main"), fiberB_context("fiberB");
     // 0. fiberB is prepared but not yet resumed
     fiber_context fiberB{
         [&fiberA_context, &fiberB_context]
