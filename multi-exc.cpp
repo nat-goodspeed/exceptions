@@ -29,26 +29,28 @@ struct Thrower
 {
     Thrower(int n): n(n)
     {}
+    template <typename... ARGS>
+    void msg(ARGS&&... args)
+    {
+        ((std::cout << indent(n) << "~Thrower(" << n << ") ") << ... << args) << std::endl;
+    }
     ~Thrower()
     {
-        std::cout << indent(n) <<  "~Thrower(" << n << ") enter" << std::endl;
+        msg("enter");
         try
         {
             if (n < 5)
             {
                 Thrower th(n+1);
-                std::cout << indent(n)
-                          << "~Thrower(" << n << ") uncaught_exceptions() = "
-                          << std::uncaught_exceptions() << std::endl;
+                msg("uncaught_exceptions() = ", std::uncaught_exceptions());
                 throw Bad(n);
             }
         }
         catch (const Bad& bad)
         {
-            std::cout << indent(n)
-                      << "~Thrower(" << n << ") caught " << bad.what() << std::endl;
+            msg("caught ", bad.what());
         }
-        std::cout << indent(n) << "~Thrower(" << n << ") done" << std::endl;
+        msg("done");
     }
     int n;
 };
